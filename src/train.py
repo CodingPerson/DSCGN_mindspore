@@ -49,7 +49,7 @@ def main():
                         help='self training update interval; 50 is good in general')
     parser.add_argument('--accum_steps', type=int, default=1,
                         help='gradient accumulation steps during training')
-    parser.add_argument('--mcp_epochs', type=int, default=3,
+    parser.add_argument('--mcp_epochs', type=int, default=5,
                         help='masked category prediction training epochs; 3-5 usually is good decpending on dataset size (smaller dataset needs more epochs)')
     parser.add_argument('--self_train_epochs', type=float, default=1,
                         help='self training epochs; 1-5 usually is good depending on dataset size (smaller dataset needs more epochs)')
@@ -64,7 +64,7 @@ def main():
     print(args)
     trainer = LOTClassTrainer(args)
     # Construct category vocabulary
-    #trainer.category_vocabulary(top_pred_num=args.top_pred_num, category_vocab_size=args.category_vocab_size)
+   # trainer.category_vocabulary(top_pred_num=args.top_pred_num, category_vocab_size=args.category_vocab_size)
     # Training with masked category prediction
     trainer.mcp(top_pred_num=args.top_pred_num, match_threshold=args.match_threshold, epochs=args.mcp_epochs)
     # Self-training

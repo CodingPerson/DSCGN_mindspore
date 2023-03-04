@@ -180,30 +180,30 @@ class LOTClassTrainer(object):
             if os.path.exists(loader_file):
                 print(f"Loading texts with label names from {loader_file}")
                 label_name_data = torch.load(loader_file)
-            # else:
-            #     print(f"Reading texts from {os.path.join(dataset_dir, text_file)}")
-            #     corpus = open(os.path.join(dataset_dir, text_file), encoding="utf-8")
-            #     docs = [doc.strip() for doc in corpus.readlines()]
-            #     docs = docs[0:int(len(docs)/50)]
-            #     print(len(docs))
-            #     print("Locating label names in the corpus.")
-            #     chunk_size = ceil(len(docs) / 12)
-            #     chunks = [docs[x:x+chunk_size] for x in range(0, len(docs), chunk_size)]
-            #     results = [self.label_name_occurrence(docs=chunk) for chunk in chunks]
-            #     #results = Parallel(n_jobs=int(self.num_cpus/2))(delayed(self.label_name_occurrence)(docs=chunk) for chunk in chunks)
-            #     input_ids_with_label_name = ops.concat([result[0] for result in results])
-            #     attention_masks_with_label_name = ops.concat([result[1] for result in results])
-            #     label_name_idx = ops.concat([result[2] for result in results])
-            #     assert len(input_ids_with_label_name) > 0, "No label names appear in corpus!"
-            #     label_name_data = {"input_ids": input_ids_with_label_name, "attention_masks": attention_masks_with_label_name, "labels": label_name_idx}
-            #return data, label_name_data
+            else:
+                print(f"Reading texts from {os.path.join(dataset_dir, text_file)}")
+                corpus = open(os.path.join(dataset_dir, text_file), encoding="utf-8")
+                docs = [doc.strip() for doc in corpus.readlines()]
+                docs = docs[0:int(len(docs)/50)]
+                print(len(docs))
+                print("Locating label names in the corpus.")
+                # chunk_size = ceil(len(docs) / 12)
+                # chunks = [docs[x:x+chunk_size] for x in range(0, len(docs), chunk_size)]
+                results = [self.label_name_occurrence(docs=doc) for doc in docs]
+                #results = Parallel(n_jobs=int(self.num_cpus/2))(delayed(self.label_name_occurrence)(docs=chunk) for chunk in chunks)
+                input_ids_with_label_name = [result[0] for result in results]
+                attention_masks_with_label_name = [result[1] for result in results]
+                label_name_idx = [result[2] for result in results]
+                assert len(input_ids_with_label_name) > 0, "No label names appear in corpus!"
+                label_name_data = {"input_ids": input_ids_with_label_name, "attention_masks": attention_masks_with_label_name, "labels": label_name_idx}
+            return data, label_name_data
         else:
             return data
     
     # find label name indices and replace out-of-vocab label names with [MASK]
     def label_name_in_doc(self, doc):
         doc = self.tokenizer.tokenize(doc)
-        label_idx = -1 * ops.ones(self.max_len,type=mindspore.dtype.int32)
+        label_idx = -1 * ops.ones(self.max_len,dtype=mindspore.dtype.int32)
         new_doc = []
         wordpcs = []
         idx = 1 # index starts at 1 due to [CLS] token
@@ -255,15 +255,15 @@ class LOTClassTrainer(object):
             attention_masks_with_label_name = mindspore.Tensor(encoded_dict['attention_mask'].numpy(),dtype=mindspore.dtype.int32)
             label_name_idx = ops.concat(label_name_idx, axis=0)
         else:
-            input_ids_with_label_name = ops.ones(self.max_len,type=mindspore.dtype.int32)
-            attention_masks_with_label_name = ops.ones(self.max_len,type=mindspore.dtype.int32)
-            label_name_idx = ops.ones(self.max_len,type=mindspore.dtype.int32)
+            input_ids_with_label_name = ops.ones(self.max_len,dtype=mindspore.int32)
+            attention_masks_with_label_name = ops.ones(self.max_len,dtype=mindspore.int32)
+            label_name_idx = ops.ones(self.max_len,dtype=mindspore.int32)
         return input_ids_with_label_name, attention_masks_with_label_name, label_name_idx
 
     # read text corpus and labels from files
     def read_data(self, dataset_dir, train_file, test_file, test_label_file,web_file,web_label_file):
-        # self.train_data, self.label_name_data = self.create_dataset(dataset_dir, train_file, None, "train.pt",
-        #                                                             find_label_name=True, label_name_loader_name="label_name_data.pt")
+        self.train_data, self.label_name_data = self.create_dataset(dataset_dir, train_file, None, "train.pt",
+                                                                     find_label_name=True, label_name_loader_name="label_name_data.pt")
         if test_file is not None:
             self.test_data = self.create_dataset(dataset_dir, test_file, test_label_file, "test.pt")
         #chenhu
@@ -421,30 +421,30 @@ class LOTClassTrainer(object):
 
     # prepare self supervision for masked category prediction (distributed function)
     #chenhu
-    def prepare_mcp_dist(self, rank, top_pred_num=50, match_threshold=10, loader_name="mcp_train.pt"):
-        model = self.set_up_dist(rank)
+    def prepare_mcp_dist(self, top_pred_num=50, match_threshold=10, loader_name="mcp_train.pt"):
+        model = self.set_up_dist(0)
         model.set_train(False)
-        train_dataset_loader = self.make_dataloader(rank, self.train_data, self.eval_batch_size)
-
+        train_dataset_loader = self.make_dataloader(0,self.train_data, self.eval_batch_size)
+        data_size = len(train_dataset_loader["input_ids"])
         all_input_ids = []
         all_mask_label = []
         all_input_mask = []
         all_input_weight=[]
         category_doc_num = defaultdict(int)
-        wrap_train_dataset_loader = tqdm(train_dataset_loader.create_dict_iterator()) if rank == 0 else train_dataset_loader
-        for batch in wrap_train_dataset_loader:
-                    input_ids = batch[0]
-                    input_mask = batch[1]
+        for i in range(data_size):
+                    input_ids = train_dataset_loader["input_ids"][i]
+                    input_mask = train_dataset_loader["attention_masks"][i]
                     predictions = model(input_ids,
                                         pred_mode="mlm",
                                         token_type_ids=None,
                                         attention_mask=input_mask)
-                    _, sorted_res = ops.TopK(predictions, top_pred_num, dim=-1)
+                    _, sorted_res = ops.TopK(sorted=True)(predictions, top_pred_num)
                     for i, category_vocab in self.category_vocab.items():
-                        match_idx = ops.zeros_like(sorted_res).bool()
+                        match_idx = torch.zeros_like(torch.Tensor(sorted_res.asnumpy())).numpy()
                         for word_id in category_vocab:
-                            match_idx = (sorted_res == word_id) | match_idx
-                        match_count = ops.cumsum(match_idx.int(), axis=-1)
+                            match_idx = (sorted_res == word_id)
+                            match_idx = mindspore.Tensor(match_idx.numpy())
+                        match_count = ops.sum(match_idx.int(), dim=-1)
                         #chenhu
                         valid_idx = (match_count > 0.4*len(category_vocab)) & (input_mask > 0)
                         weights_count = ops.div(match_count.float(),len(category_vocab))
@@ -470,7 +470,7 @@ class LOTClassTrainer(object):
                 "all_input_weight":all_input_weight,
                 "category_doc_num": category_doc_num,
         }
-        save_file = os.path.join(self.temp_dir, f"{rank}_"+loader_name)
+        save_file = os.path.join(self.temp_dir, loader_name)
         torch.save(save_dict, save_file)
 
     # prepare self supervision for masked category prediction
@@ -526,19 +526,18 @@ class LOTClassTrainer(object):
             print("Preparing self supervision for masked category prediction.")
             if not os.path.exists(self.temp_dir):
                 os.makedirs(self.temp_dir)
-            mp.spawn(self.prepare_mcp_dist, nprocs=self.world_size, args=(top_pred_num, match_threshold, loader_name))
+            self.prepare_mcp_dist(top_pred_num, match_threshold, loader_name)
             gather_res = []
             for f in os.listdir(self.temp_dir):
                 if f[-3:] == '.pt':
-                    gather_res.append(torch.load(os.path.join(self.temp_dir, f)))
-            assert len(gather_res) == self.world_size, "Number of saved files not equal to number of processes!"
-            all_input_ids = ops.concat([res["all_input_ids"] for res in gather_res], axis=0)
-            all_mask_label = ops.concat([res["all_mask_label"] for res in gather_res], axis=0)
-            all_input_mask = ops.concat([res["all_input_mask"] for res in gather_res], axis=0)
-            all_input_weight = ops.concat([res["all_input_weight"] for res in gather_res], axis=0)
+                    res=torch.load(os.path.join(self.temp_dir, f))
+            #assert len(gather_res) == self.world_size, "Number of saved files not equal to number of processes!"
+            all_input_ids = res["all_input_ids"]
+            all_mask_label = res["all_mask_label"]
+            all_input_mask = res["all_input_mask"]
+            all_input_weight = res["all_input_weight"]
             category_doc_num = {i: 0 for i in range(self.num_class)}
             for i in category_doc_num:
-                for res in gather_res:
                     if i in res["category_doc_num"]:
                         category_doc_num[i] += res["category_doc_num"][i]
             print(f"Number of documents with category indicative terms found for each category is: {category_doc_num}")
@@ -554,21 +553,20 @@ class LOTClassTrainer(object):
 
     # masked category prediction (distributed function)
     def mcp_dist(self, rank, epochs=5, loader_name="mcp_train"):
-        print('......')
         model = self.set_up_dist(rank)
         model.set_train()
         #mcp_dataset_loader = self.make_mcp_dataloader(rank, self.mcp_data, self.train_batch_size)
-        loader_file = os.path.join(self.dataset_dir, "mcp_train.pt")
-        mcp_data = torch.load(loader_file)
+        # loader_file = os.path.join(self.dataset_dir, "mcp_train.pt")
+        # mcp_data = torch.load(loader_file)
         web_dataset_loader = self.make_dataloader(rank, self.web_data, self.train_batch_size)
         data_size=int(len(web_dataset_loader["input_ids"]))
-        mcp_data_size = int(len(mcp_data["input_ids"]))
+        # mcp_data_size = int(len(mcp_data["input_ids"]))
         #web_dataset_loader = web_dataset_loader.create_dict_iterator()
         total_steps = data_size * epochs
         mindstone = list(range(20, total_steps, 20))
         learning_rates = [1e-5 * (0.5 ** i) for i in range(len(mindstone))]
         #lr = nn.piecewise_constant_lr(mindstone, learning_rates)
-        optimizer = nn.Adam(params=model.get_parameters(), lr=1e-5, eps=1e-8)
+        optimizer = nn.Adam(params=model.get_parameters(), lr=learning_rates, eps=1e-8)
        # KLDivLoss = nn.KLDivLoss(reduction='none')
         #scheduler = torch.optim.lr_scheduler.StepLR(optimizer,step_size=20,gamma=0.5)
 
@@ -578,7 +576,7 @@ class LOTClassTrainer(object):
 
 
 
-        for i in range(epochs):
+        for j in range(epochs):
 
                 total_train_loss = 0
                 # for i in tqdm(range(mcp_data_size)):
@@ -646,7 +644,7 @@ class LOTClassTrainer(object):
                #  #         optimizer.step()
                #  #         model.zero_grad()
                 #chenhu
-                for i in tqdm(range(data_size)):
+                for i in (range(data_size)):
                     input_ids = web_dataset_loader["input_ids"][i]
                     input_mask = web_dataset_loader["attention_masks"][i]
                     labels = web_dataset_loader["labels"][i]
@@ -657,7 +655,7 @@ class LOTClassTrainer(object):
 
                         logits = ops.squeeze(logits).reshape(1, -1)
                         label = labels.reshape(-1)
-                        loss = self.GCE_loss(logits, label)
+                        loss = self.mcp_loss(logits, label)
                         return loss, logits
 
                     grad_fn = mindspore.value_and_grad(forward_fn, None, optimizer.parameters, has_aux=True)
@@ -665,6 +663,8 @@ class LOTClassTrainer(object):
                     loss = mindspore.ops.depend(loss,optimizer(grads))
 
                     loss = loss.sum()
+                    if (i +1) % 4== 0:
+                        print('Epoch: '+str(j)+' batch_train_loss: '+str(loss))
                     total_train_loss += loss
 
 
@@ -676,7 +676,7 @@ class LOTClassTrainer(object):
                 loader_file = os.path.join(self.dataset_dir, loader_name)
                     #torch.save(model.module.state_dict(), loader_file)
                 mindspore.save_checkpoint(model,loader_file)
-                #self.write_no_split_results(loader_name="mcp_model.ckpt", out_file="mcp_out.txt")
+                self.write_no_split_results(loader_name="mcp_model.ckpt", out_file="mcp_out.txt")
 
         loader_file = os.path.join(self.dataset_dir, loader_name)
         mindspore.save_checkpoint(model,loader_file)
@@ -689,12 +689,12 @@ class LOTClassTrainer(object):
         #     print(f"\nLoading model trained via masked category prediction from {loader_file}")
         #
         # else:
-            #self.prepare_mcp(top_pred_num, match_threshold)
-        print(f"\nTraining model via masked category prediction.")
+        #     self.prepare_mcp(top_pred_num, match_threshold)
+        print(f"\nTraining model.")
             #mindspore.dataset.Dataset.map(operations=[self.mcp_dist],num_parallel_workers=self.world_size,)
         self.mcp_dist(rank=0,epochs=epochs,loader_name=loader_name)
             #mp.spawn(self.mcp_dist, nprocs=self.world_size, args=(epochs, loader_name))
-        self.model.load_state_dict(torch.load(loader_file))
+        self.write_no_split_results(loader_name="mcp_model.ckpt", out_file="mcp_out.txt")
 
     def inference(self, model, dataset_loader, rank, return_type):
         if return_type == "data":
@@ -746,94 +746,7 @@ class LOTClassTrainer(object):
         except RuntimeError as err:
             self.cuda_mem_error(err, "eval", rank)
     
-    # use trained model to make predictions on the test set
-    def write_results(self, loader_name="final_model.pt", out_file="out.txt"):
-        truths = open(os.path.join(self.dataset_dir, self.args.gold_label_file))
-        #chenhu
-        map_file = open(os.path.join(self.dataset_dir, self.args.map_file))
-        gold_labels = [str(label.strip()) for label in truths.readlines()]
-        mapper = [int(label.strip()) for label in map_file.readlines()]
-        loader_file = os.path.join(self.dataset_dir, loader_name)
-        assert os.path.exists(loader_file)
-        print(f"\nLoading final model from {loader_file}")
-        self.model.load_state_dict(torch.load(loader_file))
-        self.model.to(0)
-        sampler = SequentialSampler()
-        test_set = ds.GeneratorDataset(self.test_data["input_ids"], self.test_data["attention_masks"],sampler=sampler)
-        #test_dataset_loader = DataLoader(test_set, sampler=SequentialSampler(test_set), batch_size=self.eval_batch_size)
-        pred_labels = self.inference(self.model, test_set, 0, return_type="pred")
 
-        repr_prediction = np.argmax(pred_labels,axis=1)
-        assert len(mapper) == len(pred_labels) == len(repr_prediction)
-        map_pred={}
-        map_repr={}
-        for i in range(len(pred_labels)):
-            map_id = mapper[i]
-            if map_id not in map_pred:
-                map_pred[map_id]=[]
-                map_repr[map_id]=[]
-            map_pred[map_id].append(pred_labels[i])
-            map_repr[map_id].append(repr_prediction[i])
-
-        #chenhu
-        new_pred_labels = [[] for i in range(len(map_pred))]
-        new_repr_prediction=[0 for i in range(len(map_repr))]
-        assert len(new_pred_labels) == len(new_repr_prediction)==len(gold_labels)
-        for k,v in map_pred.items():
-            max_item=-100
-            max_pred=-1
-            for vi in v:
-                if max(vi) > max_item:
-                    max_item = max(vi)
-                    max_pred = list(vi.numpy()).index(max(vi.numpy()))
-                    new_pred_labels[k] = vi
-                    new_repr_prediction[k]=max_pred
-        save_file = os.path.join(self.dataset_dir, 'pre_labels.pt')
-        # 保存数据
-        val = torch.tensor([item.cpu().detach().numpy() for item in new_pred_labels]).cuda()
-        torch.save(val, save_file)
-        #chenhu
-        score = 0
-        big_count = 0
-        big_MRR = 0
-        prof_dict = defaultdict(lambda: [0.0, 0])
-        for i in range(len(new_pred_labels)):
-            index_list = list(np.argsort(-new_pred_labels[i]))
-            curr_golds = [int(i) for i in gold_labels[i].split(" ")]
-            ranks = np.zeros(self.num_class)
-            for gold in curr_golds:
-                gold_index = index_list.index(gold)
-                ranks[gold_index] = 1
-            score = score + ndcg_at_k(ranks, 1000)
-        print("ndcg")
-        print(score / len(new_pred_labels))
-        for i in range(len(new_pred_labels)):
-            index_list = list(np.argsort(-new_pred_labels[i]))
-            curr_golds = [int(i) for i in gold_labels[i].split(" ")]
-            for gold in curr_golds:
-                gold_index = index_list.index(gold)
-                imrr = 1.0 / (gold_index + 1)
-                prof_dict[gold][0] += imrr
-                prof_dict[gold][1] += 1
-        for prof, stats in prof_dict.items():
-            big_count += 1
-            big_MRR += float(stats[0] / stats[1])
-        print("mrr")
-        print(big_MRR / big_count)
-        true_num = 0
-
-        for i in range(len(new_repr_prediction)):
-            curr_golds = [int(i) for i in gold_labels[i].split(" ")]
-            if new_repr_prediction[i] in curr_golds:
-                true_num = true_num + 1
-        print("acc")
-        print(float(true_num / len(new_repr_prediction)))
-
-        out_file = os.path.join(self.dataset_dir, out_file)
-        print(f"Writing prediction results to {out_file}")
-        f_out = open(out_file, 'w')
-        for label in new_repr_prediction:
-            f_out.write(str(label) + '\n')
     def write_no_split_results(self, loader_name="mcp_train.pt", out_file="out.txt"):
         truths = open(os.path.join(self.dataset_dir, self.args.gold_label_file))
         #chenhu

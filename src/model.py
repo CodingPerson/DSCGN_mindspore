@@ -9,7 +9,7 @@ class LOTClassModel(nn.Cell):
 
     def __init__(self,num_class):
         super(LOTClassModel,self).__init__()
-        config = BertConfig.from_pretrained('/home/ubuntu/DM_group_projects/chenhu/DSCGN-master/bert-base-uncased')
+        config = BertConfig.from_pretrained('../bert-base-uncased')
         config.dtype  =mindspore.dtype.float32
         config.compute_type = mindspore.dtype.float16
         self.num_labels = num_class
